@@ -1,0 +1,433 @@
+//@version=5
+indicator("FVG/OG/VI Re-test [Custom]", overlay = true,
+  max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// ============================================================================
+// Inputs — Fair Value Gaps
+// ============================================================================
+show_fvg     = input.bool(true,  "Fair Value Gaps (FVG)", inline = "fvg_css", group = "Fair Value Gaps")
+bull_fvg_css = input.color(#2157f3, "",                    inline = "fvg_css", group = "Fair Value Gaps")
+bear_fvg_css = input.color(#ff1100, "",                    inline = "fvg_css", group = "Fair Value Gaps")
+fvg_usewidth = input.bool(false, "Min Width",              inline = "fvg_w",   group = "Fair Value Gaps")
+fvg_gapwidth = input.float(0,    "",                       inline = "fvg_w",   group = "Fair Value Gaps")
+fvg_method   = input.string("Points", "", options = ["Points", "%", "ATR"], inline = "fvg_w", group = "Fair Value Gaps")
+show_fvg_mid = input.bool(true,  "Show FVG Mid-Line",      group = "Fair Value Gaps")
+
+// Liquidity sweep confluence (FVG only)
+use_sweep      = input.bool(false, "Highlight FVG with Liquidity Sweep", inline = "sw", group = "Fair Value Gaps")
+sweep_lookback = input.int(10,   "Lookback", minval = 2,                 inline = "sw", group = "Fair Value Gaps")
+
+// ============================================================================
+// Inputs — Opening Gaps
+// ============================================================================
+show_og     = input.bool(true,  "Opening Gaps (OG)",       inline = "og_css", group = "Opening Gaps")
+bull_og_css = input.color(#2157f3, "",                     inline = "og_css", group = "Opening Gaps")
+bear_og_css = input.color(#ff1100, "",                     inline = "og_css", group = "Opening Gaps")
+og_usewidth = input.bool(false, "Min Width",               inline = "og_w",   group = "Opening Gaps")
+og_gapwidth = input.float(0,    "",                        inline = "og_w",   group = "Opening Gaps")
+og_method   = input.string("Points", "", options = ["Points", "%", "ATR"], inline = "og_w", group = "Opening Gaps")
+
+// ============================================================================
+// Inputs — Volume Imbalance
+// ============================================================================
+show_vi     = input.bool(true,  "Volume Imbalance (VI)",   inline = "vi_css", group = "Volume Imbalance")
+bull_vi_css = input.color(#2157f3, "",                     inline = "vi_css", group = "Volume Imbalance")
+bear_vi_css = input.color(#ff1100, "",                     inline = "vi_css", group = "Volume Imbalance")
+vi_usewidth = input.bool(false, "Min Width",               inline = "vi_w",   group = "Volume Imbalance")
+vi_gapwidth = input.float(0,    "",                        inline = "vi_w",   group = "Volume Imbalance")
+vi_method   = input.string("Points", "", options = ["Points", "%", "ATR"], inline = "vi_w", group = "Volume Imbalance")
+
+// ============================================================================
+// Inputs — Inversion FVG (IFVG)
+// ============================================================================
+show_ifvg     = input.bool(false, "Show Inversion FVG (IFVG)", group = "Inversion FVG")
+bull_ifvg_css = input.color(#089981, "Bull IFVG (was bear FVG)", inline = "ifvg_c", group = "Inversion FVG")
+bear_ifvg_css = input.color(#f23645, "Bear IFVG (was bull FVG)", inline = "ifvg_c", group = "Inversion FVG")
+
+// ============================================================================
+// Inputs — Behavior
+// ============================================================================
+mitig_mode     = input.string("Wick",  "Mitigation Mode", options = ["Wick", "Close"],     group = "Behavior")
+retest_mode    = input.string("Touch", "Re-test Mode",    options = ["Touch", "CE (50%)"], group = "Behavior")
+use_autoclean  = input.bool(true,  "Auto-cleanup old zones", inline = "ac", group = "Behavior")
+autoclean_bars = input.int(200,   "after N bars", minval = 10,             inline = "ac", group = "Behavior")
+max_show       = input.int(20, "Max visible zones on chart (per type per side)", minval = 1, maxval = 200, group = "Behavior")
+
+// ============================================================================
+// Inputs — Re-test arrows
+// ============================================================================
+show_arrows = input.bool(true,  "Show Re-test Arrows", group = "Re-test Arrows")
+fvg_a_bull  = input.color(color.green,   "FVG bull",  inline = "fvg_a",  group = "Re-test Arrows")
+fvg_a_bear  = input.color(color.red,     "FVG bear",  inline = "fvg_a",  group = "Re-test Arrows")
+og_a_bull   = input.color(color.lime,    "OG  bull",  inline = "og_a",   group = "Re-test Arrows")
+og_a_bear   = input.color(color.maroon,  "OG  bear",  inline = "og_a",   group = "Re-test Arrows")
+vi_a_bull   = input.color(color.aqua,    "VI  bull",  inline = "vi_a",   group = "Re-test Arrows")
+vi_a_bear   = input.color(color.fuchsia, "VI  bear",  inline = "vi_a",   group = "Re-test Arrows")
+ifvg_a_bull = input.color(color.olive,   "IFVG bull", inline = "ifvg_a", group = "Re-test Arrows")
+ifvg_a_bear = input.color(color.purple,  "IFVG bear", inline = "ifvg_a", group = "Re-test Arrows")
+
+// ============================================================================
+// Helpers
+// ============================================================================
+n   = bar_index
+atr = ta.atr(200)
+
+imbalance_detection(show, usewidth, method, width, top, btm, condition) =>
+    var bool is_width = true
+    if usewidth
+        dist = top - btm
+        is_width := switch method
+            "Points" => dist > width
+            "%"      => dist / btm * 100 > width
+            "ATR"    => dist > atr * width
+    show and condition and is_width
+
+// Push to active + history. When history exceeds max_show, delete oldest box/line
+// AND remove its entry from active arrays (so process_zones doesn't touch a deleted object).
+push_zone(array<float> tops, array<float> btms, array<line> lines, array<box> boxes, array<int> created,
+          array<line> hist_lines, array<box> hist_boxes, array<int> hist_created,
+          float top, float btm, line ln, box bx) =>
+    array.push(tops, top)
+    array.push(btms, btm)
+    array.push(lines, ln)
+    array.push(boxes, bx)
+    array.push(created, n)
+    array.push(hist_lines, ln)
+    array.push(hist_boxes, bx)
+    array.push(hist_created, n)
+
+    while array.size(hist_lines) > max_show
+        old_ln = array.shift(hist_lines)
+        old_bx = array.shift(hist_boxes)
+        old_cr = array.shift(hist_created)
+        // Remove from active arrays if still present (match by creation bar_index)
+        if array.size(created) > 0
+            for i = array.size(created) - 1 to 0
+                if array.get(created, i) == old_cr
+                    array.remove(tops, i)
+                    array.remove(btms, i)
+                    array.remove(lines, i)
+                    array.remove(boxes, i)
+                    array.remove(created, i)
+                    break
+        if not na(old_ln)
+            line.delete(old_ln)
+        if not na(old_bx)
+            box.delete(old_bx)
+
+process_zones(array<float> tops, array<float> btms, array<line> lines, array<box> boxes, array<int> created, bool is_bullish,
+              bool ifvg_on,
+              array<float> ifvg_tops, array<float> ifvg_btms, array<line> ifvg_lines, array<box> ifvg_boxes, array<int> ifvg_created,
+              array<line> ifvg_hist_lines, array<box> ifvg_hist_boxes, array<int> ifvg_hist_created, color ifvg_css) =>
+    signal = false
+    if array.size(tops) > 0
+        for i = array.size(tops) - 1 to 0
+            top = array.get(tops, i)
+            btm = array.get(btms, i)
+            ln  = array.get(lines, i)
+            bx  = array.get(boxes, i)
+            cr  = array.get(created, i)
+            mid = math.avg(top, btm)
+
+            if not na(ln)
+                line.set_x2(ln, n)
+            if not na(bx)
+                box.set_right(bx, n)
+
+            if use_autoclean and n - cr > autoclean_bars
+                array.remove(tops, i)
+                array.remove(btms, i)
+                array.remove(lines, i)
+                array.remove(boxes, i)
+                array.remove(created, i)
+                continue
+
+            mitigated = is_bullish
+              ? (mitig_mode == "Close" ? close < btm : low < btm)
+              : (mitig_mode == "Close" ? close > top : high > top)
+
+            if mitigated
+                if ifvg_on
+                    ibx = box.new(n, top, n, btm,
+                      border_color = na,
+                      bgcolor = color.new(ifvg_css, 70),
+                      text = "iFVG", text_color = chart.fg_color)
+                    push_zone(ifvg_tops, ifvg_btms, ifvg_lines, ifvg_boxes, ifvg_created,
+                      ifvg_hist_lines, ifvg_hist_boxes, ifvg_hist_created, top, btm, na, ibx)
+                array.remove(tops, i)
+                array.remove(btms, i)
+                array.remove(lines, i)
+                array.remove(boxes, i)
+                array.remove(created, i)
+                continue
+
+            entered = retest_mode == "CE (50%)"
+              ? (is_bullish ? low <= mid : high >= mid)
+              : (low <= top and high >= btm)
+
+            if n > cr and entered
+                signal := true
+                array.remove(tops, i)
+                array.remove(btms, i)
+                array.remove(lines, i)
+                array.remove(boxes, i)
+                array.remove(created, i)
+    signal
+
+webhook_send(string side, string kind, string action) =>
+    msg = "{\"symbol\":\"" + syminfo.ticker +
+          "\",\"tf\":\"" + timeframe.period +
+          "\",\"type\":\"" + kind +
+          "\",\"side\":\"" + side +
+          "\",\"action\":\"" + action +
+          "\",\"price\":" + str.tostring(close) +
+          ",\"time\":" + str.tostring(time) + "}"
+    alert(msg, alert.freq_once_per_bar)
+
+// ============================================================================
+// State arrays — active + history per (type, direction)
+// ============================================================================
+var bull_fvg_tops    = array.new_float()
+var bull_fvg_btms    = array.new_float()
+var bull_fvg_lines   = array.new_line()
+var bull_fvg_boxes   = array.new_box()
+var bull_fvg_created = array.new_int()
+var bull_fvg_h_lines   = array.new_line()
+var bull_fvg_h_boxes   = array.new_box()
+var bull_fvg_h_created = array.new_int()
+var bear_fvg_tops    = array.new_float()
+var bear_fvg_btms    = array.new_float()
+var bear_fvg_lines   = array.new_line()
+var bear_fvg_boxes   = array.new_box()
+var bear_fvg_created = array.new_int()
+var bear_fvg_h_lines   = array.new_line()
+var bear_fvg_h_boxes   = array.new_box()
+var bear_fvg_h_created = array.new_int()
+
+var bull_og_tops    = array.new_float()
+var bull_og_btms    = array.new_float()
+var bull_og_lines   = array.new_line()
+var bull_og_boxes   = array.new_box()
+var bull_og_created = array.new_int()
+var bull_og_h_lines   = array.new_line()
+var bull_og_h_boxes   = array.new_box()
+var bull_og_h_created = array.new_int()
+var bear_og_tops    = array.new_float()
+var bear_og_btms    = array.new_float()
+var bear_og_lines   = array.new_line()
+var bear_og_boxes   = array.new_box()
+var bear_og_created = array.new_int()
+var bear_og_h_lines   = array.new_line()
+var bear_og_h_boxes   = array.new_box()
+var bear_og_h_created = array.new_int()
+
+var bull_vi_tops    = array.new_float()
+var bull_vi_btms    = array.new_float()
+var bull_vi_lines   = array.new_line()
+var bull_vi_boxes   = array.new_box()
+var bull_vi_created = array.new_int()
+var bull_vi_h_lines   = array.new_line()
+var bull_vi_h_boxes   = array.new_box()
+var bull_vi_h_created = array.new_int()
+var bear_vi_tops    = array.new_float()
+var bear_vi_btms    = array.new_float()
+var bear_vi_lines   = array.new_line()
+var bear_vi_boxes   = array.new_box()
+var bear_vi_created = array.new_int()
+var bear_vi_h_lines   = array.new_line()
+var bear_vi_h_boxes   = array.new_box()
+var bear_vi_h_created = array.new_int()
+
+var bull_ifvg_tops    = array.new_float()
+var bull_ifvg_btms    = array.new_float()
+var bull_ifvg_lines   = array.new_line()
+var bull_ifvg_boxes   = array.new_box()
+var bull_ifvg_created = array.new_int()
+var bull_ifvg_h_lines   = array.new_line()
+var bull_ifvg_h_boxes   = array.new_box()
+var bull_ifvg_h_created = array.new_int()
+var bear_ifvg_tops    = array.new_float()
+var bear_ifvg_btms    = array.new_float()
+var bear_ifvg_lines   = array.new_line()
+var bear_ifvg_boxes   = array.new_box()
+var bear_ifvg_created = array.new_int()
+var bear_ifvg_h_lines   = array.new_line()
+var bear_ifvg_h_boxes   = array.new_box()
+var bear_ifvg_h_created = array.new_int()
+
+// Empty placeholders for non-FVG calls to process_zones (ifvg_on = false)
+var dummy_tops      = array.new_float()
+var dummy_btms      = array.new_float()
+var dummy_lines     = array.new_line()
+var dummy_boxes     = array.new_box()
+var dummy_created   = array.new_int()
+var dummy_h_lines   = array.new_line()
+var dummy_h_boxes   = array.new_box()
+var dummy_h_created = array.new_int()
+
+// ============================================================================
+// Volume Imbalance — detection
+// ============================================================================
+bull_vi_top = math.min(close, open)
+bull_vi_btm = math.max(close[1], open[1])
+
+bull_vi = imbalance_detection(show_vi, vi_usewidth, vi_method, vi_gapwidth,
+  bull_vi_top, bull_vi_btm,
+  open > close[1] and high[1] > low and close > close[1] and open > open[1] and high[1] < bull_vi_top)
+
+bear_vi_top = math.min(close[1], open[1])
+bear_vi_btm = math.max(close, open)
+
+bear_vi = imbalance_detection(show_vi, vi_usewidth, vi_method, vi_gapwidth,
+  bear_vi_top, bear_vi_btm,
+  open < close[1] and low[1] < high and close < close[1] and open < open[1] and low[1] > bear_vi_btm)
+
+if bull_vi
+    bx = box.new(n - 1, bull_vi_top, n, bull_vi_btm,
+      border_color = bull_vi_css, bgcolor = na, border_style = line.style_dotted)
+    push_zone(bull_vi_tops, bull_vi_btms, bull_vi_lines, bull_vi_boxes, bull_vi_created,
+      bull_vi_h_lines, bull_vi_h_boxes, bull_vi_h_created, bull_vi_top, bull_vi_btm, na, bx)
+
+if bear_vi
+    bx = box.new(n - 1, bear_vi_top, n, bear_vi_btm,
+      border_color = bear_vi_css, bgcolor = na, border_style = line.style_dotted)
+    push_zone(bear_vi_tops, bear_vi_btms, bear_vi_lines, bear_vi_boxes, bear_vi_created,
+      bear_vi_h_lines, bear_vi_h_boxes, bear_vi_h_created, bear_vi_top, bear_vi_btm, na, bx)
+
+// ============================================================================
+// Opening Gaps — detection
+// ============================================================================
+bull_og = imbalance_detection(show_og, og_usewidth, og_method, og_gapwidth,
+  bull_vi_top, bull_vi_btm, low > high[1])
+
+bear_og = imbalance_detection(show_og, og_usewidth, og_method, og_gapwidth,
+  bear_vi_top, bear_vi_btm, high < low[1])
+
+if bull_og
+    bx = box.new(n - 1, bull_vi_top, n, bull_vi_btm,
+      border_color = na, bgcolor = color.new(bull_og_css, 50),
+      text = "OG", text_color = chart.fg_color)
+    push_zone(bull_og_tops, bull_og_btms, bull_og_lines, bull_og_boxes, bull_og_created,
+      bull_og_h_lines, bull_og_h_boxes, bull_og_h_created, bull_vi_top, bull_vi_btm, na, bx)
+
+if bear_og
+    bx = box.new(n - 1, bear_vi_top, n, bear_vi_btm,
+      border_color = na, bgcolor = color.new(bear_og_css, 50),
+      text = "OG", text_color = chart.fg_color)
+    push_zone(bear_og_tops, bear_og_btms, bear_og_lines, bear_og_boxes, bear_og_created,
+      bear_og_h_lines, bear_og_h_boxes, bear_og_h_created, bear_vi_top, bear_vi_btm, na, bx)
+
+// ============================================================================
+// FVG — detection with optional sweep highlight
+// ============================================================================
+bull_fvg = imbalance_detection(show_fvg, fvg_usewidth, fvg_method, fvg_gapwidth,
+  low, high[2],
+  low > high[2] and close[1] > high[2] and not (bull_og or bull_og[1]))
+
+bear_fvg = imbalance_detection(show_fvg, fvg_usewidth, fvg_method, fvg_gapwidth,
+  low[2], high,
+  high < low[2] and close[1] < low[2] and not (bear_og or bear_og[1]))
+
+bull_sweep = use_sweep and low[1] < ta.lowest(low, sweep_lookback)[2]
+bear_sweep = use_sweep and high[1] > ta.highest(high, sweep_lookback)[2]
+
+if bull_fvg
+    top = low
+    btm = high[2]
+    avg = math.avg(top, btm)
+    transp = bull_sweep ? 60 : 80
+    label_text = bull_sweep ? "FVG +S" : ""
+    ln  = show_fvg_mid ? line.new(n - 2, avg, n, avg, color = bull_fvg_css, width = bull_sweep ? 2 : 1) : na
+    bx  = box.new(n - 2, top, n, btm,
+      border_color = na, bgcolor = color.new(bull_fvg_css, transp),
+      text = label_text, text_color = chart.fg_color)
+    push_zone(bull_fvg_tops, bull_fvg_btms, bull_fvg_lines, bull_fvg_boxes, bull_fvg_created,
+      bull_fvg_h_lines, bull_fvg_h_boxes, bull_fvg_h_created, top, btm, ln, bx)
+
+if bear_fvg
+    top = low[2]
+    btm = high
+    avg = math.avg(top, btm)
+    transp = bear_sweep ? 60 : 80
+    label_text = bear_sweep ? "FVG +S" : ""
+    ln  = show_fvg_mid ? line.new(n - 2, avg, n, avg, color = bear_fvg_css, width = bear_sweep ? 2 : 1) : na
+    bx  = box.new(n - 2, top, n, btm,
+      border_color = na, bgcolor = color.new(bear_fvg_css, transp),
+      text = label_text, text_color = chart.fg_color)
+    push_zone(bear_fvg_tops, bear_fvg_btms, bear_fvg_lines, bear_fvg_boxes, bear_fvg_created,
+      bear_fvg_h_lines, bear_fvg_h_boxes, bear_fvg_h_created, top, btm, ln, bx)
+
+// ============================================================================
+// Per-bar processing — extend, mitigation (→ IFVG for FVG), re-test
+// ============================================================================
+bull_fvg_retest = process_zones(bull_fvg_tops, bull_fvg_btms, bull_fvg_lines, bull_fvg_boxes, bull_fvg_created, true,
+  show_ifvg,
+  bear_ifvg_tops, bear_ifvg_btms, bear_ifvg_lines, bear_ifvg_boxes, bear_ifvg_created,
+  bear_ifvg_h_lines, bear_ifvg_h_boxes, bear_ifvg_h_created, bear_ifvg_css)
+bear_fvg_retest = process_zones(bear_fvg_tops, bear_fvg_btms, bear_fvg_lines, bear_fvg_boxes, bear_fvg_created, false,
+  show_ifvg,
+  bull_ifvg_tops, bull_ifvg_btms, bull_ifvg_lines, bull_ifvg_boxes, bull_ifvg_created,
+  bull_ifvg_h_lines, bull_ifvg_h_boxes, bull_ifvg_h_created, bull_ifvg_css)
+
+bull_og_retest  = process_zones(bull_og_tops,  bull_og_btms,  bull_og_lines,  bull_og_boxes,  bull_og_created,  true,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+bear_og_retest  = process_zones(bear_og_tops,  bear_og_btms,  bear_og_lines,  bear_og_boxes,  bear_og_created,  false,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+bull_vi_retest  = process_zones(bull_vi_tops,  bull_vi_btms,  bull_vi_lines,  bull_vi_boxes,  bull_vi_created,  true,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+bear_vi_retest  = process_zones(bear_vi_tops,  bear_vi_btms,  bear_vi_lines,  bear_vi_boxes,  bear_vi_created,  false,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+bull_ifvg_retest = process_zones(bull_ifvg_tops, bull_ifvg_btms, bull_ifvg_lines, bull_ifvg_boxes, bull_ifvg_created, true,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+bear_ifvg_retest = process_zones(bear_ifvg_tops, bear_ifvg_btms, bear_ifvg_lines, bear_ifvg_boxes, bear_ifvg_created, false,
+  false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
+
+// ============================================================================
+// Webhook JSON alerts
+// ============================================================================
+if bull_fvg_retest
+    webhook_send("bull", "FVG", "retest")
+if bear_fvg_retest
+    webhook_send("bear", "FVG", "retest")
+if bull_og_retest
+    webhook_send("bull", "OG", "retest")
+if bear_og_retest
+    webhook_send("bear", "OG", "retest")
+if bull_vi_retest
+    webhook_send("bull", "VI", "retest")
+if bear_vi_retest
+    webhook_send("bear", "VI", "retest")
+if bull_ifvg_retest
+    webhook_send("bull", "IFVG", "retest")
+if bear_ifvg_retest
+    webhook_send("bear", "IFVG", "retest")
+
+// ============================================================================
+// Plots — Re-test arrows
+// ============================================================================
+plotshape(show_arrows and bull_fvg_retest,  title = "Bull FVG Re-test",  location = location.belowbar, style = shape.triangleup,   color = fvg_a_bull,  size = size.tiny)
+plotshape(show_arrows and bear_fvg_retest,  title = "Bear FVG Re-test",  location = location.abovebar, style = shape.triangledown, color = fvg_a_bear,  size = size.tiny)
+plotshape(show_arrows and bull_og_retest,   title = "Bull OG Re-test",   location = location.belowbar, style = shape.arrowup,      color = og_a_bull,   size = size.tiny)
+plotshape(show_arrows and bear_og_retest,   title = "Bear OG Re-test",   location = location.abovebar, style = shape.arrowdown,    color = og_a_bear,   size = size.tiny)
+plotshape(show_arrows and bull_vi_retest,   title = "Bull VI Re-test",   location = location.belowbar, style = shape.diamond,      color = vi_a_bull,   size = size.tiny)
+plotshape(show_arrows and bear_vi_retest,   title = "Bear VI Re-test",   location = location.abovebar, style = shape.diamond,      color = vi_a_bear,   size = size.tiny)
+plotshape(show_arrows and bull_ifvg_retest, title = "Bull IFVG Re-test", location = location.belowbar, style = shape.xcross,       color = ifvg_a_bull, size = size.tiny)
+plotshape(show_arrows and bear_ifvg_retest, title = "Bear IFVG Re-test", location = location.abovebar, style = shape.xcross,       color = ifvg_a_bear, size = size.tiny)
+
+// ============================================================================
+// Alerts
+// ============================================================================
+alertcondition(bull_fvg,         "Bullish FVG",         "Bullish FVG detected")
+alertcondition(bear_fvg,         "Bearish FVG",         "Bearish FVG detected")
+alertcondition(bull_fvg_retest,  "Bullish FVG Re-test", "Bullish FVG re-tested")
+alertcondition(bear_fvg_retest,  "Bearish FVG Re-test", "Bearish FVG re-tested")
+alertcondition(bull_og,          "Bullish OG",          "Bullish OG detected")
+alertcondition(bear_og,          "Bearish OG",          "Bearish OG detected")
+alertcondition(bull_og_retest,   "Bullish OG Re-test",  "Bullish OG re-tested")
+alertcondition(bear_og_retest,   "Bearish OG Re-test",  "Bearish OG re-tested")
+alertcondition(bull_vi,          "Bullish VI",          "Bullish VI detected")
+alertcondition(bear_vi,          "Bearish VI",          "Bearish VI detected")
+alertcondition(bull_vi_retest,   "Bullish VI Re-test",  "Bullish VI re-tested")
+alertcondition(bear_vi_retest,   "Bearish VI Re-test",  "Bearish VI re-tested")
+alertcondition(bull_ifvg_retest, "Bullish IFVG Re-test","Bullish IFVG re-tested")
+alertcondition(bear_ifvg_retest, "Bearish IFVG Re-test","Bearish IFVG re-tested")
