@@ -184,9 +184,32 @@ process_zones(array<float> tops, array<float> btms, array<line> lines, array<box
 
 webhook_send(string side, string kind) =>
     arrow = side == "bull" ? "🔼" : "🔽"
-    label = side == "bull" ? "Bull " : "Bear "
-    alert(syminfo.ticker + " " + timeframe.period + arrow + "- " + label + kind + " Re-test",
+    label = side == "bull" ? "LOW "  : "HIGH "
+    alert(syminfo.ticker + " " + timeframe.period + arrow + label + kind + " Re-test",
       alert.freq_once_per_bar)
+
+// Side-effect-free FVG re-test detector for use inside request.security().
+// Tracks only the most recent unmitigated FVG per side via `var` scalars.
+fvg_retest_simple(bool side_bull) =>
+    var float ftop     = na
+    var float fbtm     = na
+    var bool  fretested = false
+    fvg = side_bull ? (low > high[2] and close[1] > high[2])
+                    : (high < low[2]  and close[1] < low[2])
+    if fvg
+        ftop      := side_bull ? low      : low[2]
+        fbtm      := side_bull ? high[2]  : high
+        fretested := false
+    sig = false
+    if not na(ftop)
+        mit = side_bull ? low < fbtm : high > ftop
+        if mit
+            ftop := na
+            fbtm := na
+        else if not fretested and low <= ftop and high >= fbtm
+            sig       := true
+            fretested := true
+    sig
 
 // ============================================================================
 // State arrays — active + history per (type, direction)
@@ -409,20 +432,20 @@ if bear_ifvg_retest
 // ============================================================================
 // Multi-TF FVG Confluence — alert when 3 selected TFs all show same-side FVG re-test
 // ============================================================================
-htf1_bull = use_mtf ? request.security(syminfo.tickerid, htf1, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
-htf2_bull = use_mtf ? request.security(syminfo.tickerid, htf2, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
-htf3_bull = use_mtf ? request.security(syminfo.tickerid, htf3, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
-htf1_bear = use_mtf ? request.security(syminfo.tickerid, htf1, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
-htf2_bear = use_mtf ? request.security(syminfo.tickerid, htf2, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
-htf3_bear = use_mtf ? request.security(syminfo.tickerid, htf3, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf1_bull = use_mtf ? request.security(syminfo.tickerid, htf1, fvg_retest_simple(true),  lookahead = barmerge.lookahead_off) : false
+htf2_bull = use_mtf ? request.security(syminfo.tickerid, htf2, fvg_retest_simple(true),  lookahead = barmerge.lookahead_off) : false
+htf3_bull = use_mtf ? request.security(syminfo.tickerid, htf3, fvg_retest_simple(true),  lookahead = barmerge.lookahead_off) : false
+htf1_bear = use_mtf ? request.security(syminfo.tickerid, htf1, fvg_retest_simple(false), lookahead = barmerge.lookahead_off) : false
+htf2_bear = use_mtf ? request.security(syminfo.tickerid, htf2, fvg_retest_simple(false), lookahead = barmerge.lookahead_off) : false
+htf3_bear = use_mtf ? request.security(syminfo.tickerid, htf3, fvg_retest_simple(false), lookahead = barmerge.lookahead_off) : false
 
 bull_conf = use_mtf and htf1_bull and htf2_bull and htf3_bull
 bear_conf = use_mtf and htf1_bear and htf2_bear and htf3_bear
 
 if bull_conf
-    alert(syminfo.ticker + " 🔼- Bull FVG Confluence (" + htf1 + "+" + htf2 + "+" + htf3 + ")", alert.freq_once_per_bar)
+    alert(syminfo.ticker + " " + timeframe.period + "⭐(" + htf1 + "+" + htf2 + "+" + htf3 + ")🔼- Bull FVG Confluence", alert.freq_once_per_bar)
 if bear_conf
-    alert(syminfo.ticker + " 🔽- Bear FVG Confluence (" + htf1 + "+" + htf2 + "+" + htf3 + ")", alert.freq_once_per_bar)
+    alert(syminfo.ticker + " " + timeframe.period + "⭐(" + htf1 + "+" + htf2 + "+" + htf3 + ")🔽- Bear FVG Confluence", alert.freq_once_per_bar)
 
 // ============================================================================
 // Plots — Re-test arrows
