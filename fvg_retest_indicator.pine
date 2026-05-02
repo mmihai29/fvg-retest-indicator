@@ -54,6 +54,14 @@ autoclean_bars = input.int(200,   "after N bars", minval = 10,             inlin
 max_show       = input.int(20, "Max visible zones on chart (per type per side)", minval = 1, maxval = 200, group = "Behavior")
 
 // ============================================================================
+// Inputs — Multi-TF FVG Confluence
+// ============================================================================
+use_mtf = input.bool(false, "Enable Multi-TF FVG Confluence", group = "Multi-TF FVG Confluence")
+htf1    = input.timeframe("60",  "TF #1", inline = "tf", group = "Multi-TF FVG Confluence")
+htf2    = input.timeframe("240", "TF #2", inline = "tf", group = "Multi-TF FVG Confluence")
+htf3    = input.timeframe("D",   "TF #3", inline = "tf", group = "Multi-TF FVG Confluence")
+
+// ============================================================================
 // Inputs — Re-test arrows
 // ============================================================================
 show_arrows = input.bool(true,  "Show Re-test Arrows", group = "Re-test Arrows")
@@ -174,15 +182,11 @@ process_zones(array<float> tops, array<float> btms, array<line> lines, array<box
                 array.remove(created, i)
     signal
 
-webhook_send(string side, string kind, string action) =>
-    msg = "{\"symbol\":\"" + syminfo.ticker +
-          "\",\"tf\":\"" + timeframe.period +
-          "\",\"type\":\"" + kind +
-          "\",\"side\":\"" + side +
-          "\",\"action\":\"" + action +
-          "\",\"price\":" + str.tostring(close) +
-          ",\"time\":" + str.tostring(time) + "}"
-    alert(msg, alert.freq_once_per_bar)
+webhook_send(string side, string kind) =>
+    arrow = side == "bull" ? "🔼" : "🔽"
+    label = side == "bull" ? "Bull " : "Bear "
+    alert(syminfo.ticker + " " + timeframe.period + arrow + "- " + label + kind + " Re-test",
+      alert.freq_once_per_bar)
 
 // ============================================================================
 // State arrays — active + history per (type, direction)
@@ -383,24 +387,42 @@ bear_ifvg_retest = process_zones(bear_ifvg_tops, bear_ifvg_btms, bear_ifvg_lines
   false, dummy_tops, dummy_btms, dummy_lines, dummy_boxes, dummy_created, dummy_h_lines, dummy_h_boxes, dummy_h_created, color.white)
 
 // ============================================================================
-// Webhook JSON alerts
+// Alert messages — text format, fired via "Any alert() function call"
 // ============================================================================
 if bull_fvg_retest
-    webhook_send("bull", "FVG", "retest")
+    webhook_send("bull", "FVG")
 if bear_fvg_retest
-    webhook_send("bear", "FVG", "retest")
+    webhook_send("bear", "FVG")
 if bull_og_retest
-    webhook_send("bull", "OG", "retest")
+    webhook_send("bull", "OG")
 if bear_og_retest
-    webhook_send("bear", "OG", "retest")
+    webhook_send("bear", "OG")
 if bull_vi_retest
-    webhook_send("bull", "VI", "retest")
+    webhook_send("bull", "VI")
 if bear_vi_retest
-    webhook_send("bear", "VI", "retest")
+    webhook_send("bear", "VI")
 if bull_ifvg_retest
-    webhook_send("bull", "IFVG", "retest")
+    webhook_send("bull", "IFVG")
 if bear_ifvg_retest
-    webhook_send("bear", "IFVG", "retest")
+    webhook_send("bear", "IFVG")
+
+// ============================================================================
+// Multi-TF FVG Confluence — alert when 3 selected TFs all show same-side FVG re-test
+// ============================================================================
+htf1_bull = use_mtf ? request.security(syminfo.tickerid, htf1, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf2_bull = use_mtf ? request.security(syminfo.tickerid, htf2, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf3_bull = use_mtf ? request.security(syminfo.tickerid, htf3, bull_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf1_bear = use_mtf ? request.security(syminfo.tickerid, htf1, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf2_bear = use_mtf ? request.security(syminfo.tickerid, htf2, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
+htf3_bear = use_mtf ? request.security(syminfo.tickerid, htf3, bear_fvg_retest, lookahead = barmerge.lookahead_off) : false
+
+bull_conf = use_mtf and htf1_bull and htf2_bull and htf3_bull
+bear_conf = use_mtf and htf1_bear and htf2_bear and htf3_bear
+
+if bull_conf
+    alert(syminfo.ticker + " 🔼- Bull FVG Confluence (" + htf1 + "+" + htf2 + "+" + htf3 + ")", alert.freq_once_per_bar)
+if bear_conf
+    alert(syminfo.ticker + " 🔽- Bear FVG Confluence (" + htf1 + "+" + htf2 + "+" + htf3 + ")", alert.freq_once_per_bar)
 
 // ============================================================================
 // Plots — Re-test arrows
@@ -414,20 +436,3 @@ plotshape(show_arrows and bear_vi_retest,   title = "Bear VI Re-test",   locatio
 plotshape(show_arrows and bull_ifvg_retest, title = "Bull IFVG Re-test", location = location.belowbar, style = shape.xcross,       color = ifvg_a_bull, size = size.tiny)
 plotshape(show_arrows and bear_ifvg_retest, title = "Bear IFVG Re-test", location = location.abovebar, style = shape.xcross,       color = ifvg_a_bear, size = size.tiny)
 
-// ============================================================================
-// Alerts
-// ============================================================================
-alertcondition(bull_fvg,         "Bullish FVG",         "Bullish FVG detected")
-alertcondition(bear_fvg,         "Bearish FVG",         "Bearish FVG detected")
-alertcondition(bull_fvg_retest,  "Bullish FVG Re-test", "Bullish FVG re-tested")
-alertcondition(bear_fvg_retest,  "Bearish FVG Re-test", "Bearish FVG re-tested")
-alertcondition(bull_og,          "Bullish OG",          "Bullish OG detected")
-alertcondition(bear_og,          "Bearish OG",          "Bearish OG detected")
-alertcondition(bull_og_retest,   "Bullish OG Re-test",  "Bullish OG re-tested")
-alertcondition(bear_og_retest,   "Bearish OG Re-test",  "Bearish OG re-tested")
-alertcondition(bull_vi,          "Bullish VI",          "Bullish VI detected")
-alertcondition(bear_vi,          "Bearish VI",          "Bearish VI detected")
-alertcondition(bull_vi_retest,   "Bullish VI Re-test",  "Bullish VI re-tested")
-alertcondition(bear_vi_retest,   "Bearish VI Re-test",  "Bearish VI re-tested")
-alertcondition(bull_ifvg_retest, "Bullish IFVG Re-test","Bullish IFVG re-tested")
-alertcondition(bear_ifvg_retest, "Bearish IFVG Re-test","Bearish IFVG re-tested")
