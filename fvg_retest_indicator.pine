@@ -54,12 +54,58 @@ autoclean_bars = input.int(200,   "after N bars", minval = 10,             inlin
 max_show       = input.int(20, "Max visible zones on chart (per type per side)", minval = 1, maxval = 200, group = "Behavior")
 
 // ============================================================================
-// Inputs — Multi-TF FVG Confluence
+// Inputs — Multi-TF FVG Confluence (alerts)
 // ============================================================================
 use_mtf = input.bool(false, "Enable Multi-TF FVG Confluence", group = "Multi-TF FVG Confluence")
 htf1    = input.timeframe("60",  "TF #1", inline = "tf", group = "Multi-TF FVG Confluence")
 htf2    = input.timeframe("240", "TF #2", inline = "tf", group = "Multi-TF FVG Confluence")
 htf3    = input.timeframe("D",   "TF #3", inline = "tf", group = "Multi-TF FVG Confluence")
+
+// ============================================================================
+// Inputs — Multi-TF FVG Display (chart visualization)
+// ============================================================================
+mtf_disp_extend  = input.int(8,    "Extend Bars", minval = 1, maxval = 50,  group = "Multi-TF FVG Display")
+mtf_remove_fill  = input.bool(true, "Delete Filled Zones",                   group = "Multi-TF FVG Display")
+mtf_max_count    = input.int(20,   "Max FVGs per TF",     minval = 1, maxval = 100, group = "Multi-TF FVG Display")
+mtf_ltf_hide     = input.bool(true, "Hide Lower TF Zones (HTF must be >= chart TF)", group = "Multi-TF FVG Display")
+
+mtf1_show  = input.bool(false, "TF #1", inline = "m1",  group = "Multi-TF FVG Display")
+mtf1_tf    = input.timeframe("60", "", inline = "m1",   group = "Multi-TF FVG Display")
+mtf1_lbl   = input.string("1h", "",    inline = "m1",   group = "Multi-TF FVG Display")
+mtf1_bull  = input.color(color.new(color.green, 80), "", inline = "m1", group = "Multi-TF FVG Display")
+mtf1_bear  = input.color(color.new(color.red,   80), "", inline = "m1", group = "Multi-TF FVG Display")
+
+mtf2_show  = input.bool(false, "TF #2", inline = "m2",  group = "Multi-TF FVG Display")
+mtf2_tf    = input.timeframe("240","", inline = "m2",   group = "Multi-TF FVG Display")
+mtf2_lbl   = input.string("4h", "",    inline = "m2",   group = "Multi-TF FVG Display")
+mtf2_bull  = input.color(color.new(color.green, 80), "", inline = "m2", group = "Multi-TF FVG Display")
+mtf2_bear  = input.color(color.new(color.red,   80), "", inline = "m2", group = "Multi-TF FVG Display")
+
+mtf3_show  = input.bool(false, "TF #3", inline = "m3",  group = "Multi-TF FVG Display")
+mtf3_tf    = input.timeframe("D",  "", inline = "m3",   group = "Multi-TF FVG Display")
+mtf3_lbl   = input.string("D",  "",    inline = "m3",   group = "Multi-TF FVG Display")
+mtf3_bull  = input.color(color.new(color.green, 80), "", inline = "m3", group = "Multi-TF FVG Display")
+mtf3_bear  = input.color(color.new(color.red,   80), "", inline = "m3", group = "Multi-TF FVG Display")
+
+mtf_border_w     = input.int(1, "Border Width", minval = 0, maxval = 3, group = "Multi-TF FVG Display")
+mtf_bull_border  = input.color(color.new(color.green, 100), "Bull Border", inline = "br", group = "Multi-TF FVG Display")
+mtf_bear_border  = input.color(color.new(color.red,   100), "Bear Border", inline = "br", group = "Multi-TF FVG Display")
+mtf_show_mid     = input.bool(false, "Show Midline", inline = "mid", group = "Multi-TF FVG Display")
+mtf_bull_mid     = input.color(color.new(color.green, 0), "Bull", inline = "mid", group = "Multi-TF FVG Display")
+mtf_bear_mid     = input.color(color.new(color.red,   0), "Bear", inline = "mid", group = "Multi-TF FVG Display")
+mtf_lbl_size_in  = input.string("Tiny",  "Label Size",  options = ["Tiny", "Small", "Normal", "Large"], group = "Multi-TF FVG Display")
+mtf_lbl_align_in = input.string("Right", "Label Align", options = ["Left", "Center", "Right"], group = "Multi-TF FVG Display")
+
+// ============================================================================
+// Inputs — Confluence (HTF + Local same bar)
+// ============================================================================
+conf_lbl_show   = input.bool(true, "Show Confluence Label", group = "Confluence (HTF + Local same bar)")
+conf_lbl_color  = input.color(color.yellow,         "Confluence Label Color", group = "Confluence (HTF + Local same bar)")
+conf_lbl_text   = input.color(color.new(#1e2230,0), "Confluence Text Color",  group = "Confluence (HTF + Local same bar)")
+conf_lbl_suffix = input.string("★",                 "Confluence Label Suffix", group = "Confluence (HTF + Local same bar)")
+conf_use_tf1    = input.bool(true,  "Use TF #1", inline = "cuse", group = "Confluence (HTF + Local same bar)")
+conf_use_tf2    = input.bool(true,  "Use TF #2", inline = "cuse", group = "Confluence (HTF + Local same bar)")
+conf_use_tf3    = input.bool(true,  "Use TF #3", inline = "cuse", group = "Confluence (HTF + Local same bar)")
 
 // ============================================================================
 // Inputs — Re-test arrows
@@ -194,11 +240,10 @@ fvg_retest_simple(bool side_bull) =>
     var float ftop     = na
     var float fbtm     = na
     var bool  fretested = false
-    fvg = side_bull ? (low > high[2] and close[1] > high[2])
-                    : (high < low[2]  and close[1] < low[2])
+    fvg = side_bull ? (low > high[2] and close[1] > high[2]) : (high < low[2] and close[1] < low[2])
     if fvg
-        ftop      := side_bull ? low      : low[2]
-        fbtm      := side_bull ? high[2]  : high
+        ftop      := side_bull ? low     : low[2]
+        fbtm      := side_bull ? high[2] : high
         fretested := false
     sig = false
     if not na(ftop)
@@ -210,6 +255,132 @@ fvg_retest_simple(bool side_bull) =>
             sig       := true
             fretested := true
     sig
+
+// HTF FVG drawing — detects FVG on the bar 2 steps back (confirmed) on HTF data,
+// draws a box on the LTF chart using bar_time coords, extends until mitigated.
+mtf_label_size() =>
+    switch mtf_lbl_size_in
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        "Large"  => size.large
+        => size.tiny
+
+mtf_label_align() =>
+    switch mtf_lbl_align_in
+        "Left"   => text.align_left
+        "Center" => text.align_center
+        "Right"  => text.align_right
+        => text.align_right
+
+// boxes/mids hold drawn objects; tops/btms hold zone bounds (top > btm always);
+// seen stores HTF open_time of the gap candle (t2) used for dedup & mitigation reference.
+mtf_fvg_process(array<box> boxes, array<line> mids, array<float> tops, array<float> btms, array<bool> bulls, array<int> seen, bool show_tf, string htf_param, float h0, float l0, float h2, float l2, float c0, int t2, color bull_bg, color bear_bg, string lbl_text) =>
+    tf_ok = not mtf_ltf_hide or timeframe.in_seconds() <= timeframe.in_seconds(htf_param)
+    if show_tf and tf_ok and not na(h0) and not na(l0) and not na(h2) and not na(l2) and not na(t2) and not na(time[1])
+        is_bull = l0 > h2
+        is_bear = h0 < l2
+        is_new  = array.size(seen) == 0
+        if not is_new and (is_bull or is_bear)
+            is_new := array.get(seen, array.size(seen) - 1) != t2
+        if (is_bull or is_bear) and is_new
+            top   = is_bull ? l0 : l2
+            btm   = is_bull ? h2 : h0
+            // Fixed right edge = creation time + extend CHART (LTF) bars forward.
+            // Same visual width regardless of which HTF the FVG comes from.
+            r_t = time + (time - time[1]) * mtf_disp_extend
+            bx = box.new(t2, top, r_t, btm, xloc = xloc.bar_time,
+                  border_color = is_bull ? mtf_bull_border : mtf_bear_border,
+                  border_width = mtf_border_w,
+                  bgcolor      = is_bull ? bull_bg : bear_bg,
+                  text         = lbl_text,
+                  text_color   = is_bull ? mtf_bull_mid : mtf_bear_mid,
+                  text_halign  = mtf_label_align(),
+                  text_size    = mtf_label_size())
+            mid_v   = math.avg(top, btm)
+            mid_col = is_bull ? mtf_bull_mid : mtf_bear_mid
+            ml = mtf_show_mid ? line.new(t2, mid_v, r_t, mid_v, xloc = xloc.bar_time, style = line.style_dotted, color = mid_col) : na
+            array.push(boxes, bx)
+            array.push(mids,  ml)
+            array.push(tops,  top)
+            array.push(btms,  btm)
+            array.push(bulls, is_bull)
+            array.push(seen,  t2)
+            if array.size(boxes) > mtf_max_count
+                old_bx = array.shift(boxes)
+                old_ml = array.shift(mids)
+                array.shift(tops)
+                array.shift(btms)
+                array.shift(bulls)
+                array.shift(seen)
+                if not na(old_bx)
+                    box.delete(old_bx)
+                if not na(old_ml)
+                    line.delete(old_ml)
+    // Mitigate existing boxes (close-based, RunRox-style). Right edge is FIXED at creation
+    // (creation_time + extend bars) — boxes do NOT keep extending forever as price advances.
+    if array.size(boxes) > 0
+        for i = array.size(boxes) - 1 to 0
+            top_i  = array.get(tops, i)
+            btm_i  = array.get(btms, i)
+            is_bull_i = array.get(bulls, i)
+            mitigated = is_bull_i ? close < btm_i : close > top_i
+            bx = array.get(boxes, i)
+            ml = array.get(mids,  i)
+            if mitigated and mtf_remove_fill
+                if not na(bx)
+                    box.delete(bx)
+                if not na(ml)
+                    line.delete(ml)
+                array.remove(boxes, i)
+                array.remove(mids,  i)
+                array.remove(tops,  i)
+                array.remove(btms,  i)
+                array.remove(bulls, i)
+                array.remove(seen,  i)
+            if mitigated and not mtf_remove_fill
+                if not na(bx)
+                    box.set_right(bx, time)
+                if not na(ml)
+                    line.set_x2(ml, time)
+            int _drop = 0
+
+// Consume all active HTF zones of the given side — used after a confluence fires
+// so the same HTF zones don't trigger another label on subsequent re-tests.
+mtf_consume_side(array<bool> bulls, array<float> tops, array<float> btms, array<box> boxes, array<line> mids, array<int> seen, bool want_bull) =>
+    if array.size(bulls) > 0
+        for i = array.size(bulls) - 1 to 0
+            if array.get(bulls, i) == want_bull
+                array.remove(boxes, i)
+                array.remove(mids,  i)
+                array.remove(tops,  i)
+                array.remove(btms,  i)
+                array.remove(bulls, i)
+                array.remove(seen,  i)
+            int _z = 0
+
+// When the local LTF FVG is re-tested, freeze any overlapping HTF boxes at this bar
+// (they coincided with the mitigated zone — extend should stop there).
+mtf_freeze_overlap(array<box> boxes, array<line> mids, array<float> tops, array<float> btms, array<bool> bulls, array<int> seen, bool side_bull, float touch_price) =>
+    if array.size(boxes) > 0
+        for i = array.size(boxes) - 1 to 0
+            if array.get(bulls, i) == side_bull
+                top_i = array.get(tops, i)
+                btm_i = array.get(btms, i)
+                if touch_price >= btm_i and touch_price <= top_i
+                    bx = array.get(boxes, i)
+                    ml = array.get(mids, i)
+                    if not na(bx)
+                        box.set_right(bx, time)
+                    if not na(ml)
+                        line.set_x2(ml, time)
+                    array.remove(boxes, i)
+                    array.remove(mids,  i)
+                    array.remove(tops,  i)
+                    array.remove(btms,  i)
+                    array.remove(bulls, i)
+                    array.remove(seen,  i)
+            int _d = 0
 
 // ============================================================================
 // State arrays — active + history per (type, direction)
@@ -291,6 +462,33 @@ var dummy_created   = array.new_int()
 var dummy_h_lines   = array.new_line()
 var dummy_h_boxes   = array.new_box()
 var dummy_h_created = array.new_int()
+
+// Multi-TF FVG Display state (boxes, midlines, top/btm, orientation, last detected HTF time per TF)
+var mtf1_boxes = array.new_box()
+var mtf1_mids  = array.new_line()
+var mtf1_tops  = array.new_float()
+var mtf1_btms  = array.new_float()
+var mtf1_bulls = array.new_bool()
+var mtf1_seen  = array.new_int()
+var mtf2_boxes = array.new_box()
+var mtf2_mids  = array.new_line()
+var mtf2_tops  = array.new_float()
+var mtf2_btms  = array.new_float()
+var mtf2_bulls = array.new_bool()
+var mtf2_seen  = array.new_int()
+var mtf3_boxes = array.new_box()
+var mtf3_mids  = array.new_line()
+var mtf3_tops  = array.new_float()
+var mtf3_btms  = array.new_float()
+var mtf3_bulls = array.new_bool()
+var mtf3_seen  = array.new_int()
+
+// Confluence label state — track each label so it can be deleted when its parent
+// LTF FVG is mitigated (same mitig_mode as Behavior section).
+var conf_lbls    = array.new_label()
+var conf_l_tops  = array.new_float()
+var conf_l_btms  = array.new_float()
+var conf_l_bulls = array.new_bool()
 
 // ============================================================================
 // Volume Imbalance — detection
@@ -446,6 +644,78 @@ if bull_conf
     alert(syminfo.ticker + " " + timeframe.period + "⭐(" + htf1 + "+" + htf2 + "+" + htf3 + ")🔼- Bull FVG Confluence", alert.freq_once_per_bar)
 if bear_conf
     alert(syminfo.ticker + " " + timeframe.period + "⭐(" + htf1 + "+" + htf2 + "+" + htf3 + ")🔽- Bear FVG Confluence", alert.freq_once_per_bar)
+
+// ============================================================================
+// Multi-TF FVG Display — fetch HTF OHLC and draw boxes on chart
+// ============================================================================
+[mtf1_h0, mtf1_l0, mtf1_h2, mtf1_l2, mtf1_c0, mtf1_t0, mtf1_t2] = request.security(syminfo.tickerid, mtf1_tf, [high[1], low[1], high[3], low[3], close[1], time[1], time[3]], lookahead = barmerge.lookahead_off)
+[mtf2_h0, mtf2_l0, mtf2_h2, mtf2_l2, mtf2_c0, mtf2_t0, mtf2_t2] = request.security(syminfo.tickerid, mtf2_tf, [high[1], low[1], high[3], low[3], close[1], time[1], time[3]], lookahead = barmerge.lookahead_off)
+[mtf3_h0, mtf3_l0, mtf3_h2, mtf3_l2, mtf3_c0, mtf3_t0, mtf3_t2] = request.security(syminfo.tickerid, mtf3_tf, [high[1], low[1], high[3], low[3], close[1], time[1], time[3]], lookahead = barmerge.lookahead_off)
+
+if mtf1_show
+    mtf_fvg_process(mtf1_boxes, mtf1_mids, mtf1_tops, mtf1_btms, mtf1_bulls, mtf1_seen, true, mtf1_tf, mtf1_h0, mtf1_l0, mtf1_h2, mtf1_l2, mtf1_c0, mtf1_t2, mtf1_bull, mtf1_bear, mtf1_lbl)
+if mtf2_show
+    mtf_fvg_process(mtf2_boxes, mtf2_mids, mtf2_tops, mtf2_btms, mtf2_bulls, mtf2_seen, true, mtf2_tf, mtf2_h0, mtf2_l0, mtf2_h2, mtf2_l2, mtf2_c0, mtf2_t2, mtf2_bull, mtf2_bear, mtf2_lbl)
+if mtf3_show
+    mtf_fvg_process(mtf3_boxes, mtf3_mids, mtf3_tops, mtf3_btms, mtf3_bulls, mtf3_seen, true, mtf3_tf, mtf3_h0, mtf3_l0, mtf3_h2, mtf3_l2, mtf3_c0, mtf3_t2, mtf3_bull, mtf3_bear, mtf3_lbl)
+
+// On local FVG re-test, freeze overlapping HTF boxes at this bar
+if bull_fvg_retest
+    mtf_freeze_overlap(mtf1_boxes, mtf1_mids, mtf1_tops, mtf1_btms, mtf1_bulls, mtf1_seen, true, low)
+    mtf_freeze_overlap(mtf2_boxes, mtf2_mids, mtf2_tops, mtf2_btms, mtf2_bulls, mtf2_seen, true, low)
+    mtf_freeze_overlap(mtf3_boxes, mtf3_mids, mtf3_tops, mtf3_btms, mtf3_bulls, mtf3_seen, true, low)
+if bear_fvg_retest
+    mtf_freeze_overlap(mtf1_boxes, mtf1_mids, mtf1_tops, mtf1_btms, mtf1_bulls, mtf1_seen, false, high)
+    mtf_freeze_overlap(mtf2_boxes, mtf2_mids, mtf2_tops, mtf2_btms, mtf2_bulls, mtf2_seen, false, high)
+    mtf_freeze_overlap(mtf3_boxes, mtf3_mids, mtf3_tops, mtf3_btms, mtf3_bulls, mtf3_seen, false, high)
+
+// ============================================================================
+// Confluence Label — fires on local FVG re-test (process_zones logic) when at least
+// one selected HTF has an active FVG zone of the same direction. Label sits at the
+// candle wick (low for bull, high for bear) — same bar where the local box stops.
+// ============================================================================
+// Confluence trigger: any active HTF zone of the requested direction exists.
+// (Same simple check as before — the mtf_freeze_overlap call earlier handles the
+// "stop extend on local mitigation overlap" requirement.)
+has_side(array<bool> arr, bool want_bull) =>
+    found = false
+    if array.size(arr) > 0
+        for k = 0 to array.size(arr) - 1
+            if array.get(arr, k) == want_bull
+                found := true
+                break
+    found
+
+mtf1_active_bull = mtf1_show and conf_use_tf1 and has_side(mtf1_bulls, true)
+mtf1_active_bear = mtf1_show and conf_use_tf1 and has_side(mtf1_bulls, false)
+mtf2_active_bull = mtf2_show and conf_use_tf2 and has_side(mtf2_bulls, true)
+mtf2_active_bear = mtf2_show and conf_use_tf2 and has_side(mtf2_bulls, false)
+mtf3_active_bull = mtf3_show and conf_use_tf3 and has_side(mtf3_bulls, true)
+mtf3_active_bear = mtf3_show and conf_use_tf3 and has_side(mtf3_bulls, false)
+
+bull_conf_local = conf_lbl_show and bull_fvg_retest and (mtf1_active_bull or mtf2_active_bull or mtf3_active_bull)
+bear_conf_local = conf_lbl_show and bear_fvg_retest and (mtf1_active_bear or mtf2_active_bear or mtf3_active_bear)
+
+conf_tags(bool side_bull) =>
+    parts = ""
+    if (side_bull ? mtf1_active_bull : mtf1_active_bear)
+        parts += mtf1_lbl
+    if (side_bull ? mtf2_active_bull : mtf2_active_bear)
+        parts += (parts == "" ? "" : "+") + mtf2_lbl
+    if (side_bull ? mtf3_active_bull : mtf3_active_bear)
+        parts += (parts == "" ? "" : "+") + mtf3_lbl
+    parts
+
+if bull_conf_local
+    label.new(bar_index, low, xloc = xloc.bar_index, yloc = yloc.price,
+      text = conf_tags(true) + " " + conf_lbl_suffix,
+      color = conf_lbl_color, textcolor = conf_lbl_text,
+      style = label.style_label_up, size = size.small)
+if bear_conf_local
+    label.new(bar_index, high, xloc = xloc.bar_index, yloc = yloc.price,
+      text = conf_tags(false) + " " + conf_lbl_suffix,
+      color = conf_lbl_color, textcolor = conf_lbl_text,
+      style = label.style_label_down, size = size.small)
 
 // ============================================================================
 // Plots — Re-test arrows
